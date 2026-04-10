@@ -20,6 +20,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from dotenv import load_dotenv
 
+from services.fish_observations import fetch_observations
 from services.report import build_report, smart_truncate
 from services.solunar import fetch_solunar
 from services.waters import find_nearest_water
@@ -145,23 +146,29 @@ def create_dispatcher() -> Dispatcher:
         log.info("location from %s: %.5f %.5f", user, lat, lon)
 
         progress = await msg.answer(
-            "🔎 Смотрю погоду, луну и ищу ближайший водоём…",
+            "🔎 Смотрю погоду, луну, водоём и наблюдения рыб…",
         )
 
         weather_task = asyncio.create_task(fetch_weather(lat, lon))
         water_task = asyncio.create_task(find_nearest_water(lat, lon))
+        obs_task = asyncio.create_task(fetch_observations(lat, lon, radius_km=25))
+
+        async def _cancel_quietly(task: asyncio.Task) -> None:
+            if task.done():
+                return
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
 
         # --- погода обязательна ---
         try:
             weather = await weather_task
         except Exception as exc:
             log.exception("weather fetch failed")
-            # Отменяем второй таск, чтобы не было orphan coroutine.
-            water_task.cancel()
-            try:
-                await water_task
-            except (asyncio.CancelledError, Exception):
-                pass
+            await _cancel_quietly(water_task)
+            await _cancel_quietly(obs_task)
             await progress.edit_text(
                 "❌ Не удалось получить прогноз погоды: "
                 f"{type(exc).__name__}. Попробуй ещё раз через минуту."
@@ -185,6 +192,15 @@ def create_dispatcher() -> Dispatcher:
         except Exception as exc:
             log.warning("overpass fetch failed: %s", exc)
 
+        # --- наблюдения рыб (не критично) ---
+        observations: list[dict] = []
+        try:
+            observations = await obs_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            log.warning("fish observations fetch failed: %s", exc)
+
         # --- сборка отчёта ---
         try:
             report = build_report(
@@ -194,6 +210,7 @@ def create_dispatcher() -> Dispatcher:
                 solunar=solunar,
                 water=water,
                 today=date.today(),
+                observations=observations,
             )
         except Exception as exc:
             log.exception("report building failed")

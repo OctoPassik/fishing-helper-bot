@@ -9,11 +9,17 @@ Telegram-бот, который по геопозиции подсказывае
 
 Получает геопозицию → показывает:
 
-- 🌊 ближайший именованный водоём (река, озеро, водохранилище, пруд)
+- 🎯 на каком водоёме ты стоишь *прямо сейчас* (on-site, ≤250 м) — или 🎣
+  ближайший именованный водоём (5 км fallback)
+- 🌊 OSM-факты о водоёме: глубина, соль, камыш, пересыхающий/нет
 - 🌤 текущую погоду: температура, ветер, давление, облачность, осадки
 - 🌙 солнце, восход/закат, фазу луны и solunar-периоды клёва
 - 📊 оценку клёва 0/10 по давлению, ветру, облачности и осадкам
-- 🐟 топ-4 рыбы по сезону с персональными рекомендациями по снастям
+- 🔬 **реальные наблюдения рыб в 25 км** из iNaturalist + GBIF —
+  с русскими названиями и количеством наблюдений
+- 🐟 топ-4 рыбы по сезону с персональными рекомендациями по снастям;
+  виды, подтверждённые наблюдениями, получают метку 🔬 и сильный буст
+  в ранжировании
 - ⚠️ актуальный нерестовый запрет (для Краснодарского края)
 - 👶 советы новичку под текущую погоду
 
@@ -47,19 +53,27 @@ python bot.py
 - **Погода** — [Open-Meteo](https://open-meteo.com)
 - **Солнце/луна/клёв** — [Solunar API](https://solunar.org)
 - **Водоёмы** — [OpenStreetMap](https://www.openstreetmap.org) через Overpass API
-- **Рыбы и снасти** — собственная база, составлена под Краснодарский край
+- **Наблюдения рыб** — [iNaturalist API](https://api.inaturalist.org) (с
+  `locale=ru` для русских названий) и
+  [GBIF Occurrence API](https://www.gbif.org/developer/occurrence)
+  (включая [датасет Fish occurrence in the Kuban River Basin](https://doi.org/10.3897/BDJ.9.e76701))
+- **Рыбы и снасти** — собственная база (17 видов юга России) с латинскими
+  именами для связки с внешними API наблюдений
 
 ## Структура
 
 ```
 fishing-helper-bot/
-├── bot.py                    # aiogram-обработчики + точка входа
+├── bot.py                        # aiogram-обработчики + точка входа
 ├── services/
-│   ├── weather.py            # клиент Open-Meteo
-│   ├── solunar.py            # клиент solunar.org
-│   ├── waters.py             # клиент Overpass (ближайший водоём)
-│   ├── fish_db.py            # база знаний о рыбах
-│   └── report.py             # оценка клёва + сборка отчёта
+│   ├── weather.py                # клиент Open-Meteo
+│   ├── solunar.py                # клиент solunar.org
+│   ├── waters.py                 # Overpass: on-site / nearest water
+│   ├── inaturalist.py            # клиент iNaturalist API (locale=ru)
+│   ├── gbif.py                   # клиент GBIF Occurrence API
+│   ├── fish_observations.py      # facade: merge iNat+GBIF + LRU cache
+│   ├── fish_db.py                # база рыб + резолвер латинских имён
+│   └── report.py                 # оценка клёва + сборка отчёта
 ├── requirements.txt
 ├── .env.example
 └── README.md

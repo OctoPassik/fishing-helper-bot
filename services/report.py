@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from .fish_db import Fish, recommend_fish
+from .fish_db import Fish, recommend_fish, resolve_latin
 from .solunar import moon_phase_ru
 from .weather import wind_direction_ru
 
@@ -342,6 +342,71 @@ def _format_water_extras(water: dict | None) -> list[str]:
 
 # ----------------------------------------------------------------- report ----
 
+def _process_observations(
+    observations: list[dict] | None,
+) -> tuple[dict[str, int], list[tuple[str, int]]]:
+    """Split external fish observations into known-local and unknown.
+
+    Returns (local_counts, unknown_list) where:
+      - local_counts: {Fish.name: total_count} — species resolved to FISH_DB
+      - unknown_list: [(label, count), ...] — species not in our DB, label is
+                      best-available Russian name or Latin
+    """
+    local_counts: dict[str, int] = {}
+    unknown: list[tuple[str, int]] = []
+    if not observations:
+        return local_counts, unknown
+
+    for obs in observations:
+        scientific = obs.get("scientific")
+        count = int(obs.get("count") or 0)
+        if count <= 0:
+            continue
+        fish = resolve_latin(scientific)
+        if fish is not None:
+            local_counts[fish.name] = local_counts.get(fish.name, 0) + count
+        else:
+            label = (
+                obs.get("russian")
+                or obs.get("english")
+                or scientific
+                or ""
+            )
+            if label:
+                unknown.append((str(label), count))
+    return local_counts, unknown
+
+
+def _format_observations_section(
+    local_counts: dict[str, int],
+    unknown: list[tuple[str, int]],
+    sources: set[str] | None = None,
+) -> list[str]:
+    """Build the 🔬 «Замечены здесь» section of the report."""
+    if not local_counts and not unknown:
+        return []
+
+    source_label = "iNaturalist + GBIF"
+    if sources:
+        src_map = {"inaturalist": "iNaturalist", "gbif": "GBIF"}
+        names = [src_map.get(s, s) for s in sources]
+        if names:
+            source_label = " + ".join(sorted(names))
+
+    lines: list[str] = [f"🔬 *Замечены здесь* ({source_label})"]
+    # Known local fish, sorted by count desc
+    for name, count in sorted(local_counts.items(), key=lambda x: (-x[1], x[0])):
+        lines.append(f"• {md_escape(name)} — {count} набл.")
+
+    # Unknown species: show top-5 so section doesn't blow up the message
+    if unknown:
+        top = sorted(unknown, key=lambda x: -x[1])[:6]
+        labels = ", ".join(md_escape(n) for n, _ in top)
+        extra = "" if len(unknown) <= 6 else f" и ещё {len(unknown) - 6}"
+        lines.append(f"_Не в базе{extra}: {labels}_")
+    return lines
+
+
 def build_report(
     *,
     lat: float,
@@ -350,6 +415,7 @@ def build_report(
     solunar: dict | None,
     water: dict | None,
     today: _dt.date,
+    observations: list[dict] | None = None,
 ) -> str:
     current = (weather or {}).get("current") or {}
     daily = (weather or {}).get("daily") or {}
@@ -454,21 +520,44 @@ def build_report(
         lines.append(f"  {n}")
     lines.append("")
 
+    # ----- наблюдения из iNaturalist + GBIF -----
+    local_counts, unknown = _process_observations(observations)
+    sources: set[str] = set()
+    for obs in observations or []:
+        for src in obs.get("sources") or ([obs.get("source")] if obs.get("source") else []):
+            if src:
+                sources.add(src)
+    obs_lines = _format_observations_section(local_counts, unknown, sources)
+    if obs_lines:
+        lines.extend(obs_lines)
+        lines.append("")
+
     # ----- рыба по сезону -----
     month = today.month
     raw_water_type = (water or {}).get("type")
     # «водоём» — fallback-тип от Overpass, его не учитываем как фильтр habitat.
     water_type = raw_water_type if raw_water_type and raw_water_type != "водоём" else None
     water_temp_guess = (temp - 2.0) if temp is not None else 15.0
-    fishes = recommend_fish(month, water_type, water_temp_guess, max_items=4)
+    fishes = recommend_fish(
+        month,
+        water_type,
+        water_temp_guess,
+        observed=local_counts or None,
+        max_items=4,
+    )
 
-    lines.append(f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}*")
+    if local_counts:
+        header = f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}* (🔬 — подтверждено наблюдениями)"
+    else:
+        header = f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}*"
+    lines.append(header)
     if fishes:
         for i, f in enumerate(fishes, 1):
             gear_str = ", ".join(f.gear)
             bait_str = ", ".join(f.baits[:4])
             peak_mark = "🔥 пик сезона" if month in f.peak_months else "активна"
-            lines.append(f"*{i}. {f.name}* — {peak_mark} ({f.kind})")
+            confirmed = " 🔬" if f.name in local_counts else ""
+            lines.append(f"*{i}. {f.name}*{confirmed} — {peak_mark} ({f.kind})")
             lines.append(f"   🎣 Снасть: {gear_str}")
             lines.append(f"   🪱 Наживка: {bait_str}")
             lines.append(f"   ⏰ Время: {f.best_time}")
