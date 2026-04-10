@@ -4,6 +4,7 @@ from __future__ import annotations
 import aiohttp
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+USER_AGENT = "fishing-helper-bot/1.0 (+https://github.com/OctoPassik/fishing-helper-bot)"
 
 # WMO weather codes → русское описание + эмодзи
 WEATHER_CODE_RU: dict[int, str] = {
@@ -84,18 +85,30 @@ async def fetch_weather(lat: float, lon: float) -> dict:
     }
 
     timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    headers = {"User-Agent": USER_AGENT}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         async with session.get(OPEN_METEO_URL, params=params) as resp:
             resp.raise_for_status()
             data = await resp.json()
 
+    if not isinstance(data, dict):
+        raise ValueError(f"Open-Meteo вернул не-dict ответ: {type(data).__name__}")
+
     current = data.get("current") or {}
     pressure_hpa = current.get("surface_pressure")
     if pressure_hpa is not None:
-        current["surface_pressure_mmhg"] = round(pressure_hpa * 0.75006, 1)
+        try:
+            current["surface_pressure_mmhg"] = round(float(pressure_hpa) * 0.75006, 1)
+        except (TypeError, ValueError):
+            pass
     wc = current.get("weather_code")
     if wc is not None:
-        current["weather_desc_ru"] = WEATHER_CODE_RU.get(int(wc), "погода не определена")
+        try:
+            current["weather_desc_ru"] = WEATHER_CODE_RU.get(
+                int(wc), "погода не определена"
+            )
+        except (TypeError, ValueError):
+            current["weather_desc_ru"] = "погода не определена"
     data["current"] = current
     return data
 
@@ -104,6 +117,10 @@ def wind_direction_ru(degrees: float | None) -> str:
     """Convert meteo wind direction (degrees) to Russian 8-rhumb label."""
     if degrees is None:
         return "—"
+    try:
+        deg = float(degrees) % 360
+    except (TypeError, ValueError):
+        return "—"
     dirs = ["С", "С-В", "В", "Ю-В", "Ю", "Ю-З", "З", "С-З"]
-    ix = int((float(degrees) + 22.5) // 45) % 8
+    ix = int((deg + 22.5) // 45) % 8
     return dirs[ix]

@@ -15,11 +15,12 @@ from datetime import date
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from dotenv import load_dotenv
 
-from services.report import build_report
+from services.report import build_report, smart_truncate
 from services.solunar import fetch_solunar
 from services.waters import find_nearest_water
 from services.weather import fetch_weather
@@ -81,10 +82,34 @@ FALLBACK = (
 
 
 def _tz_hours_from_weather(weather: dict) -> int:
-    offset = weather.get("utc_offset_seconds")
+    """Return signed integer UTC offset in hours from Open-Meteo response."""
+    offset = weather.get("utc_offset_seconds") if weather else None
     if offset is None:
         return 0
-    return int(offset) // 3600
+    try:
+        seconds = int(offset)
+    except (TypeError, ValueError):
+        return 0
+    # round-toward-zero to handle fractional half-hour zones (e.g. +5:30 → 5)
+    return int(seconds / 3600)
+
+
+async def _safe_send_plain(msg: Message, text: str) -> None:
+    """Send a plain-text message, splitting if necessary to respect Telegram
+    4096-character limit."""
+    max_len = 4000
+    parts: list[str] = []
+    remaining = text
+    while len(remaining) > max_len:
+        cut = remaining[:max_len]
+        nl = cut.rfind("\n")
+        if nl < max_len // 2:
+            nl = max_len
+        parts.append(remaining[:nl])
+        remaining = remaining[nl:].lstrip("\n")
+    parts.append(remaining)
+    for part in parts:
+        await msg.answer(part, parse_mode=None, disable_web_page_preview=True)
 
 
 def create_dispatcher() -> Dispatcher:
@@ -112,9 +137,10 @@ def create_dispatcher() -> Dispatcher:
 
     @dp.message(F.location)
     async def on_location(msg: Message) -> None:
-        assert msg.location is not None
-        lat = msg.location.latitude
-        lon = msg.location.longitude
+        if msg.location is None:
+            return  # defensive: filter already guarantees this
+        lat = float(msg.location.latitude)
+        lon = float(msg.location.longitude)
         user = msg.from_user.id if msg.from_user else "?"
         log.info("location from %s: %.5f %.5f", user, lat, lon)
 
@@ -122,35 +148,44 @@ def create_dispatcher() -> Dispatcher:
             "🔎 Смотрю погоду, луну и ищу ближайший водоём…",
         )
 
-        weather: dict | None = None
-        water: dict | None = None
-        solunar: dict | None = None
+        weather_task = asyncio.create_task(fetch_weather(lat, lon))
+        water_task = asyncio.create_task(find_nearest_water(lat, lon))
 
+        # --- погода обязательна ---
         try:
-            weather_task = asyncio.create_task(fetch_weather(lat, lon))
-            water_task = asyncio.create_task(find_nearest_water(lat, lon))
             weather = await weather_task
         except Exception as exc:
             log.exception("weather fetch failed")
+            # Отменяем второй таск, чтобы не было orphan coroutine.
+            water_task.cancel()
+            try:
+                await water_task
+            except (asyncio.CancelledError, Exception):
+                pass
             await progress.edit_text(
-                f"❌ Не удалось получить прогноз погоды: {exc}\n"
-                "Попробуй ещё раз через минуту."
+                "❌ Не удалось получить прогноз погоды: "
+                f"{type(exc).__name__}. Попробуй ещё раз через минуту."
             )
             return
 
+        # --- solunar (не критично) ---
         tz_hours = _tz_hours_from_weather(weather)
+        solunar: dict | None = None
         try:
             solunar = await fetch_solunar(lat, lon, date.today(), tz_hours)
         except Exception as exc:
             log.warning("solunar fetch failed: %s", exc)
-            solunar = None
 
+        # --- водоёмы (не критично) ---
+        water: dict | None = None
         try:
             water = await water_task
+        except asyncio.CancelledError:
+            pass
         except Exception as exc:
             log.warning("overpass fetch failed: %s", exc)
-            water = None
 
+        # --- сборка отчёта ---
         try:
             report = build_report(
                 lat=lat,
@@ -162,18 +197,36 @@ def create_dispatcher() -> Dispatcher:
             )
         except Exception as exc:
             log.exception("report building failed")
-            await progress.edit_text(f"❌ Ошибка составления отчёта: {exc}")
+            await progress.edit_text(
+                f"❌ Ошибка составления отчёта: {type(exc).__name__}"
+            )
             return
 
-        # Telegram limit — 4096 chars per message
-        if len(report) > 4000:
-            report = report[:3990] + "\n…"
+        # smart_truncate уже применён внутри build_report, но подстрахуемся.
+        report = smart_truncate(report)
 
+        # --- отправка: пытаемся markdown, при ошибке делаем чистый текст ---
         try:
-            await progress.edit_text(report, disable_web_page_preview=True)
+            await progress.edit_text(
+                report,
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True,
+            )
+            return
+        except TelegramBadRequest as exc:
+            # Чаще всего — can't parse entities. Удалим прогресс и пошлём
+            # обычный текст новым сообщением.
+            log.warning("markdown edit failed: %s", exc)
+        except Exception as exc:
+            log.warning("progress edit failed: %s", exc)
+
+        # Пытаемся удалить прогресс, чтобы не оставлять «смотрю…».
+        try:
+            await progress.delete()
         except Exception:
-            # Fallback — отправить новым сообщением без markdown
-            await msg.answer(report, parse_mode=None, disable_web_page_preview=True)
+            pass
+
+        await _safe_send_plain(msg, report)
 
     @dp.message()
     async def fallback(msg: Message) -> None:
@@ -195,7 +248,9 @@ async def main() -> None:
     dp = create_dispatcher()
     log.info("Bot started")
     try:
-        await dp.start_polling(bot)
+        # allowed_updates=None позволяет aiogram самому подобрать список
+        # апдейтов на основе зарегистрированных хендлеров.
+        await dp.start_polling(bot, allowed_updates=None)
     finally:
         await bot.session.close()
 

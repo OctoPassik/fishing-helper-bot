@@ -5,7 +5,10 @@ import datetime as _dt
 
 import aiohttp
 
+# URL format: lat,lon (decimal degrees), date (YYYYMMDD), tz (signed int UTC hours).
+# Example: .../45.04,38.98,20260410,3  or  .../40.71,-74.00,20260410,-5
 SOLUNAR_URL_FMT = "https://api.solunar.org/solunar/{lat},{lon},{date},{tz}"
+USER_AGENT = "fishing-helper-bot/1.0 (+https://github.com/OctoPassik/fishing-helper-bot)"
 
 
 async def fetch_solunar(
@@ -16,20 +19,25 @@ async def fetch_solunar(
 ) -> dict:
     """Fetch solunar data for a date at given coords.
 
-    `tz_offset` is an integer UTC offset in hours (e.g. 3 for MSK).
+    `tz_offset` is a signed integer UTC offset in hours
+    (e.g. 3 for MSK, -5 for EST).
     Returns the raw JSON dict (keys like `moonPhase`, `major1Start`, etc.).
     """
     url = SOLUNAR_URL_FMT.format(
-        lat=lat,
-        lon=lon,
+        lat=f"{float(lat):.4f}",
+        lon=f"{float(lon):.4f}",
         date=d.strftime("%Y%m%d"),
-        tz=tz_offset,
+        tz=int(tz_offset),
     )
     timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    headers = {"User-Agent": USER_AGENT}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         async with session.get(url) as resp:
             resp.raise_for_status()
-            return await resp.json()
+            data = await resp.json()
+    if not isinstance(data, dict):
+        raise ValueError(f"Solunar API вернул не-dict: {type(data).__name__}")
+    return data
 
 
 _MOON_PHASE_RU = {

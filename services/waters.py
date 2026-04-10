@@ -1,9 +1,12 @@
 """Поиск ближайшего водоёма через Overpass API (OpenStreetMap)."""
 from __future__ import annotations
 
+import logging
 import math
 
 import aiohttp
+
+log = logging.getLogger(__name__)
 
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
@@ -11,12 +14,16 @@ OVERPASS_ENDPOINTS = (
     "https://overpass.openstreetmap.ru/api/interpreter",
 )
 
+# Overpass API guidelines require a descriptive User-Agent for all requests.
+USER_AGENT = "fishing-helper-bot/1.0 (+https://github.com/OctoPassik/fishing-helper-bot)"
+
 _QUERY_TMPL = """
 [out:json][timeout:25];
 (
   way(around:5000,{lat},{lon})["waterway"~"river|stream|canal"];
   way(around:5000,{lat},{lon})["natural"="water"];
   relation(around:5000,{lat},{lon})["natural"="water"];
+  node(around:5000,{lat},{lon})["natural"="water"];
 );
 out center tags 40;
 """.strip()
@@ -56,20 +63,23 @@ def _human_type(tags: dict) -> str:
 async def find_nearest_water(lat: float, lon: float) -> dict | None:
     """Return nearest named water body within ~5 km or None."""
     query = _QUERY_TMPL.format(lat=lat, lon=lon)
-    timeout = aiohttp.ClientTimeout(total=30)
+    timeout = aiohttp.ClientTimeout(total=45)
+    headers = {"User-Agent": USER_AGENT}
     data = None
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         for url in OVERPASS_ENDPOINTS:
             try:
                 async with session.post(url, data={"data": query}) as resp:
                     if resp.status != 200:
+                        log.info("overpass %s: HTTP %s", url, resp.status)
                         continue
                     data = await resp.json()
                     break
-            except Exception:
+            except Exception as exc:
+                log.info("overpass %s failed: %s", url, exc)
                 continue
 
-    if not data:
+    if not data or not isinstance(data, dict):
         return None
 
     best = None
