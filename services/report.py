@@ -243,6 +243,103 @@ def _krasnodar_nerest_warning(today: _dt.date) -> str | None:
     return "\n".join([header, *active, "", footer])
 
 
+# -------------------------------------------------------- water formatting --
+
+def _format_water_header(water: dict | None) -> list[str]:
+    """Собирает заголовок про водоём — разный для on_site и nearest."""
+    if not water:
+        return [
+            "🎣 *Место рыбалки*",
+            "_Ближайший водоём в радиусе 5 км не найден._",
+        ]
+
+    name = water.get("name")
+    wtype_raw = (water.get("type") or "водоём").lower()
+    wtype = md_escape(wtype_raw.capitalize())
+    on_site = bool(water.get("on_site"))
+    inside = bool(water.get("inside"))
+    dist_km = water.get("distance_km")
+
+    if on_site:
+        if name:
+            wname = md_escape(str(name))
+            if inside:
+                head = f"🎯 *Ты на воде: {wtype} {wname}*"
+            else:
+                head = f"🎯 *Ты на месте: {wtype} {wname}*"
+        else:
+            if inside:
+                head = f"🎯 *Ты на воде: {wtype} (без названия в OSM)*"
+            else:
+                head = f"🎯 *Ты на месте: {wtype} (без названия в OSM)*"
+        result = [head]
+        if isinstance(dist_km, (int, float)) and dist_km > 0.01 and not inside:
+            result.append(f"_до воды ≈ {int(dist_km * 1000)} м_")
+        return result
+
+    # Nearest, не on_site
+    if name:
+        wname = md_escape(str(name))
+        head = f"🎣 *Ближайший водоём: {wtype} {wname}*"
+        if isinstance(dist_km, (int, float)):
+            head += f" — {dist_km:.1f} км"
+        return [
+            head,
+            "_Ближе 250 м воды нет — ищи подъезд к этому водоёму._",
+        ]
+    return [
+        "🎣 *Место рыбалки*",
+        "_Ближайший именованный водоём в радиусе 5 км не найден._",
+    ]
+
+
+# Полезные OSM-теги водоёмов, которые стоит показать рыбаку.
+_OSM_EXTRA_LABELS = (
+    ("depth", "Глубина"),
+    ("maxdepth", "Макс. глубина"),
+    ("ele", "Высота над уровнем моря"),
+)
+
+
+def _format_water_extras(water: dict | None) -> list[str]:
+    """Дополнительные полезные факты о водоёме из OSM-тегов."""
+    if not water:
+        return []
+    tags = water.get("tags") or {}
+    if not tags:
+        return []
+
+    extras: list[str] = []
+
+    for key, label in _OSM_EXTRA_LABELS:
+        val = tags.get(key)
+        if val:
+            extras.append(f"• {label}: {md_escape(str(val))} м")
+
+    if tags.get("salt") == "yes" or tags.get("water") == "salt":
+        extras.append("• 🧂 Вода солёная/солоноватая — рыба морская/лиманная")
+    if tags.get("intermittent") == "yes":
+        extras.append("• 💧 Водоём пересыхающий — уровень нестабилен")
+    if tags.get("seasonal") == "yes":
+        extras.append("• 🍂 Сезонный водоём — уровень сильно падает летом")
+
+    reservoir_type = tags.get("reservoir_type")
+    if reservoir_type:
+        extras.append(
+            f"• Тип водохранилища: {md_escape(str(reservoir_type))}"
+        )
+
+    fish_tag = tags.get("fish") or tags.get("fishing")
+    if fish_tag and fish_tag not in ("no", "yes"):
+        extras.append(f"• Рыба (OSM): {md_escape(str(fish_tag))}")
+    if tags.get("fishing") == "no":
+        extras.append("• ⛔ В OSM помечено как *fishing=no* — ловля запрещена!")
+
+    if extras:
+        return ["🌊 *Про водоём*", *extras]
+    return []
+
+
 # ----------------------------------------------------------------- report ----
 
 def build_report(
@@ -260,20 +357,15 @@ def build_report(
     lines: list[str] = []
 
     # ----- заголовок -----
-    water_name = (water or {}).get("name")
-    if water and water_name:
-        wtype = (water.get("type") or "водоём").capitalize()
-        wname = md_escape(str(water_name))
-        wdist = water.get("distance_km")
-        head = f"🎣 *{md_escape(wtype)} {wname}*"
-        if isinstance(wdist, (int, float)):
-            head += f" — {wdist:.1f} км от тебя"
-        lines.append(head)
-    else:
-        lines.append("🎣 *Место рыбалки*")
-        lines.append("_Ближайший именованный водоём в радиусе 5 км не найден._")
+    lines.extend(_format_water_header(water))
     lines.append(f"📍 `{lat:.4f}, {lon:.4f}`")
     lines.append("")
+
+    # ----- OSM-теги водоёма (глубина, соль, камыш и т.п.) -----
+    extras = _format_water_extras(water)
+    if extras:
+        lines.extend(extras)
+        lines.append("")
 
     # ----- погода -----
     temp = _safe_float(current.get("temperature_2m"))
