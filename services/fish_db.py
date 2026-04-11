@@ -441,13 +441,16 @@ def recommend_fish(
     water_type: str | None,
     water_temp_guess: float,
     observed: dict[str, int] | None = None,
+    kind_preference: str | None = None,
     max_items: int = 4,
 ) -> list[Fish]:
     """Return up to `max_items` fish likely to bite this month in given water.
 
-    If `observed` is provided (mapping Fish.name → observation count from
-    external APIs), matching species get a huge score boost so they dominate
-    the top-N.
+    Parameters:
+      - `observed`: {fish_name: count} from external APIs (iNat/GBIF). Matching
+        species get +15..+35 score so they dominate the top-N.
+      - `kind_preference`: "мирная" / "хищная" / None. When bite engine
+        determines current conditions favour one kind, matching fish get +3.
     """
     scored: list[tuple[float, Fish]] = []
     for fish in FISH_DB:
@@ -464,6 +467,8 @@ def recommend_fish(
         if observed and fish.name in observed:
             # Жирный буст за реальные наблюдения поблизости.
             score += 15.0 + min(float(observed[fish.name]), 20.0)
+        if kind_preference and fish.kind == kind_preference:
+            score += 3.0
         scored.append((score, fish))
     scored.sort(key=lambda x: -x[0])
     return [f for _, f in scored[:max_items]]

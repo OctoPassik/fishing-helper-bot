@@ -65,10 +65,12 @@ async def fetch_weather(lat: float, lon: float) -> dict:
         "hourly": ",".join([
             "temperature_2m",
             "precipitation_probability",
+            "precipitation",
             "weather_code",
             "cloud_cover",
             "surface_pressure",
             "wind_speed_10m",
+            "wind_direction_10m",
         ]),
         "daily": ",".join([
             "weather_code",
@@ -82,6 +84,7 @@ async def fetch_weather(lat: float, lon: float) -> dict:
         "wind_speed_unit": "ms",
         "timezone": "auto",
         "forecast_days": 2,
+        "past_days": 1,
     }
 
     timeout = aiohttp.ClientTimeout(total=20)

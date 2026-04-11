@@ -3,6 +3,12 @@ from __future__ import annotations
 
 import datetime as _dt
 
+from .bite import (
+    BiteReport,
+    compute_bite,
+    get_current_local_minutes,
+    overall_label,
+)
 from .fish_db import Fish, recommend_fish, resolve_latin
 from .solunar import moon_phase_ru
 from .weather import wind_direction_ru
@@ -86,77 +92,241 @@ def _safe_float(v) -> float | None:
 
 
 def bite_rating(current: dict) -> tuple[int, list[str]]:
-    """Вернуть (score 0..10, список причин).
-
-    Все значения ветра — в м/с (wind_speed_unit=ms в Open-Meteo).
-    """
-    score = 5
-    notes: list[str] = []
-
-    pressure = _safe_float(current.get("surface_pressure_mmhg"))
-    if pressure is not None and 500 < pressure < 900:  # sanity
-        if 748 <= pressure <= 762:
-            score += 2
-            notes.append(f"✅ давление в норме ({pressure:.0f} мм рт.ст.)")
-        elif 745 <= pressure <= 765:
-            score += 1
-            notes.append(f"🟡 давление {pressure:.0f} мм рт.ст.")
-        else:
-            score -= 2
-            notes.append(
-                f"⚠️ давление {pressure:.0f} мм рт.ст. — рыба будет вялая"
-            )
-
-    wind = _safe_float(current.get("wind_speed_10m"))
-    if wind is not None and wind >= 0:
-        if wind < 1:
-            score -= 1
-            notes.append(f"🟡 штиль ({wind:.1f} м/с) — рыба осторожнее")
-        elif wind <= 5:
-            score += 2
-            notes.append(f"✅ ветер {wind:.1f} м/с — идеальная рябь")
-        elif wind <= 8:
-            notes.append(f"🟡 ветер {wind:.1f} м/с — терпимо")
-        else:
-            score -= 2
-            notes.append(f"⚠️ сильный ветер {wind:.1f} м/с — сложно ловить")
-
-    clouds = _safe_float(current.get("cloud_cover"))
-    if clouds is not None:
-        if 30 <= clouds <= 80:
-            score += 1
-            notes.append("✅ переменная облачность — самое то")
-        elif clouds > 95:
-            notes.append("🟡 сплошная облачность")
-
-    precip = _safe_float(current.get("precipitation"))
-    if precip is not None and precip > 2:
-        score -= 2
-        notes.append(f"⚠️ осадки {precip:.1f} мм — неприятно ловить")
-
-    temp = _safe_float(current.get("temperature_2m"))
-    if temp is not None:
-        if temp < 0:
-            score -= 1
-            notes.append("🟡 ниже нуля — клёв только у хищника")
-        elif temp > 30:
-            score -= 1
-            notes.append("🟡 жара — рыба уйдёт на глубину")
-
-    score = max(0, min(10, score))
-    return score, notes
+    """Legacy-обёртка. Новый код использует compute_bite() напрямую."""
+    fake_weather = {"current": current or {}, "hourly": {}, "daily": {}}
+    report = compute_bite(
+        weather=fake_weather,
+        solunar=None,
+        water=None,
+        today=_dt.date.today(),
+        now_minutes=12 * 60,
+    )
+    return report.overall, [_factor_line(f) for f in report.factors]
 
 
 def bite_label(score: int) -> str:
-    if score >= 8:
-        return "🟢 отличный"
-    if score >= 6:
-        return "🟢 хороший"
-    if score >= 4:
-        return "🟡 средний"
-    if score >= 2:
-        return "🟠 слабый"
-    return "🔴 плохой"
+    return overall_label(score)
+
+
+def _factor_line(factor) -> str:
+    icon = {"good": "✅", "bad": "⚠️", "mixed": "🟠"}.get(factor.kind, "🟡")
+    return f"{icon} {factor.text}"
+
+
+# ------------------------------------------------------ beginner explainers --
+
+# Короткий глоссарий снастей. Показывается один раз в конце отчёта, чтобы
+# новичок понимал слова «поплавок», «донка», «спиннинг».
+_GEAR_GLOSSARY = (
+    "• *Поплавок* — обычная удочка с поплавком на леске. Самая простая снасть, "
+    "подходит для карася, плотвы, окуня.",
+    "• *Донка / фидер* — удочка без поплавка. На конце лески грузик и крючок с "
+    "наживкой, лежат на дне. Ловит крупную мирную рыбу: сазан, лещ, карп.",
+    "• *Спиннинг* — палка с катушкой. На крючке не наживка, а *приманка* "
+    "(блесна, воблер, силиконка), которую ты забрасываешь и тянешь. Ловит хищника: "
+    "щуку, судака, окуня.",
+)
+
+
+_MAX_WEATHER_NOTES = 4  # лимит, чтобы отчёт вмещался в 4000 символов
+
+
+def _format_weather_explainer(
+    current: dict, bite_obj: "BiteReport"
+) -> list[str]:
+    """Короткие объяснения «что эта погода значит для клёва» — простым языком.
+
+    Возвращаем только топ-`_MAX_WEATHER_NOTES` наиболее важных замечаний,
+    приоритизируя solunar/заря → давление → ветер → температура → облачность.
+    """
+    temp = _safe_float(current.get("temperature_2m"))
+    wind = _safe_float(current.get("wind_speed_10m"))
+    pressure = _safe_float(current.get("surface_pressure_mmhg"))
+    clouds = _safe_float(current.get("cloud_cover"))
+    precip = _safe_float(current.get("precipitation"))
+
+    notes: list[str] = []
+
+    # Priority 1: solunar (crucial right now)
+    if bite_obj.solunar_now == "major":
+        notes.append(
+            "• 🔥 *Ты в major-пике solunar* — окно 1.5–2 ч, когда "
+            "рыба клюёт в разы активнее. Не уходи, забрасывай!"
+        )
+    elif bite_obj.solunar_now == "minor":
+        notes.append(
+            "• ✨ *Ты в minor-пике solunar* — клёв заметно сильнее среднего."
+        )
+    elif bite_obj.solunar_next and bite_obj.solunar_next[1] <= 45:
+        kind, mins = bite_obj.solunar_next
+        label = "major" if kind == "major" else "minor"
+        notes.append(
+            f"• До *{label}-пика* {mins} мин — раскладывайся заранее, "
+            "чтобы к пику быть уже на точке."
+        )
+
+    # Priority 2: zorya (dawn/dusk)
+    if bite_obj.sun_now == "dawn":
+        notes.append(
+            "• 🌅 *Утренняя зоря* — лучший час суток. Рыба вышла "
+            "кормиться после ночи. Активно кидай."
+        )
+    elif bite_obj.sun_now == "dusk":
+        notes.append(
+            "• 🌇 *Вечерняя зоря* — второй лучший час суток, "
+            "особенно для хищника."
+        )
+
+    # Priority 3: pressure trend (huge factor)
+    if bite_obj.pressure_delta_6h is not None:
+        delta = bite_obj.pressure_delta_6h
+        if abs(delta) <= 1.0 and pressure is not None:
+            notes.append(
+                f"• Давление *стабильное* ({pressure:.0f} мм). Рыба "
+                "спокойна, хорошо ест, не в стрессе — это *главный* "
+                "фактор клёва."
+            )
+        elif -4.0 <= delta <= -1.0:
+            notes.append(
+                f"• Давление *плавно падает* ({delta:+.1f} мм за 6ч). "
+                "Скоро непогода — перед ней рыба жадно кушает, это *жор*. "
+                "Лови прямо сейчас!"
+            )
+        elif delta < -4.0:
+            notes.append(
+                f"• Давление *резко падает* ({delta:+.1f} мм за 6ч). "
+                "Шторм приближается — рыба в стрессе."
+            )
+        elif delta > 3.0:
+            notes.append(
+                f"• Давление *растёт* ({delta:+.1f} мм за 6ч). "
+                "Непогода прошла, рыба будет вялой 1–2 дня."
+            )
+
+    # Priority 4: temperature context
+    if temp is not None:
+        if temp < 0:
+            notes.append(
+                "• Мороз. Рыба спит, клюёт только зимний хищник — и то медленно."
+            )
+        elif temp < 8:
+            notes.append(
+                "• Холодно. Мирная вялая, клюёт днём. Хищник активнее."
+            )
+        elif temp > 30:
+            notes.append(
+                "• Пекло. Днём рыба не кормится — только ночью или "
+                "рано утром."
+            )
+        elif 18 <= temp <= 25 and clouds is not None and clouds < 15:
+            notes.append(
+                "• Тепло и солнечно. Рыба прячется в тень, ищи места "
+                "под деревьями или у коряг."
+            )
+
+    # Priority 5: wind (if not already covered by tips elsewhere)
+    if wind is not None and len(notes) < _MAX_WEATHER_NOTES:
+        if wind < 1:
+            notes.append(
+                "• *Штиль* — рыба видит тебя на берегу. Кидай *далеко*, "
+                "не подходи к краю."
+            )
+        elif 2 <= wind <= 5:
+            notes.append(
+                f"• Лёгкая рябь ({wind:.0f} м/с) — *идеально*. Рыба не "
+                "видит тебя, вода насыщается кислородом."
+            )
+        elif wind > 8:
+            notes.append(
+                f"• *Сильный ветер* ({wind:.0f} м/с). Ищи подветренный "
+                "берег и закрытые заливы."
+            )
+
+    # Precipitation
+    if precip is not None and precip > 1.5 and len(notes) < _MAX_WEATHER_NOTES:
+        notes.append(
+            f"• Дождь {precip:.1f} мм. Лёгкий дождь оживляет клёв, "
+            "но сильный ливень — прячься, особенно если молния."
+        )
+
+    return notes[:_MAX_WEATHER_NOTES]
+
+
+def _format_bite_explainer(bite_obj: "BiteReport") -> list[str]:
+    """Объяснение «как читать оценку клёва»."""
+    score = bite_obj.overall
+    if score >= 9:
+        text = (
+            "Условия — супер. Если сейчас не поймаешь — значит снасть "
+            "неправильно собрана. Иди на воду *немедленно*."
+        )
+    elif score >= 7:
+        text = (
+            "Условия хорошие. При грамотном подходе вернёшься с уловом. "
+            "Самое время учиться — ошибки простит."
+        )
+    elif score >= 5:
+        text = (
+            "Средне. Клёв будет, но не бешеный. Рыбу придётся поискать, "
+            "чаще менять место и наживку."
+        )
+    elif score >= 3:
+        text = (
+            "Слабо. Мирная рыба почти спит. Имеет смысл попробовать "
+            "хищника на спиннинг или подождать изменения погоды."
+        )
+    else:
+        text = (
+            "Плохо. Честно — лучше пересидеть сегодня дома или "
+            "прийти очень рано/очень поздно. Клёва почти не будет."
+        )
+    return [text]
+
+
+def _format_solunar_explainer() -> str:
+    return (
+        "_Major-пики — это окна когда луна в зените или надире; рыба "
+        "в это время жадно кушает. Minor-пики — восход/заход луны, "
+        "клёв чуть слабее. Работают по всему миру круглый год._"
+    )
+
+
+def _format_bite_block(bite: "BiteReport") -> list[str]:
+    """Render the bite rating block with peaceful/predator split + factors."""
+    lines: list[str] = []
+    lines.append(f"📊 *Клёв: {bite.overall}/10 — {overall_label(bite.overall)}*")
+
+    # Мирная/хищник
+    def _kind_line(label: str, score: int, is_preferred: bool) -> str:
+        mark = " ⬅️" if is_preferred else ""
+        return f"  {label}: *{score}/10* — {overall_label(score)}{mark}"
+
+    lines.append(
+        _kind_line(
+            "🐟 мирная",
+            bite.peaceful,
+            bite.kind_preference == "мирная",
+        )
+    )
+    lines.append(
+        _kind_line(
+            "🦈 хищник",
+            bite.predator,
+            bite.kind_preference == "хищная",
+        )
+    )
+
+    # Топ причин — отсортируем по влиянию (самые мощные сверху), максимум 6.
+    top = sorted(
+        bite.factors,
+        key=lambda f: (-f.abs_weight, bite.factors.index(f)),
+    )[:6]
+    if top:
+        lines.append("")
+        lines.append("📈 *Почему такая оценка*")
+        for f in top:
+            lines.append(f"  {_factor_line(f)}")
+    return lines
 
 
 # ----------------------------------------------------------------- helpers ---
@@ -416,9 +586,12 @@ def build_report(
     water: dict | None,
     today: _dt.date,
     observations: list[dict] | None = None,
+    now_minutes: int | None = None,
 ) -> str:
     current = (weather or {}).get("current") or {}
     daily = (weather or {}).get("daily") or {}
+    if now_minutes is None:
+        now_minutes = get_current_local_minutes(weather)
 
     lines: list[str] = []
 
@@ -479,6 +652,22 @@ def build_report(
         pass
     lines.append("")
 
+    # Вычислим bite сразу — он нужен и для объяснений, и для оценки клёва
+    bite = compute_bite(
+        weather=weather,
+        solunar=solunar,
+        water=water,
+        today=today,
+        now_minutes=now_minutes,
+    )
+
+    # ----- «Что эта погода значит» — пояснения для новичка -----
+    weather_notes = _format_weather_explainer(current, bite)
+    if weather_notes:
+        lines.append("👉 *Что это значит для клёва*")
+        lines.extend(weather_notes)
+        lines.append("")
+
     # ----- солнце и луна -----
     sunrise_list = daily.get("sunrise") or []
     sunset_list = daily.get("sunset") or []
@@ -511,13 +700,16 @@ def build_report(
                 lines.append(
                     f"• Оценка дня по лунному календарю: {day_rating_label}"
                 )
+        # Короткое объяснение что такое major/minor пик (только если есть solunar)
+        if have_solunar:
+            lines.append(_format_solunar_explainer())
         lines.append("")
 
     # ----- оценка клёва -----
-    score, notes = bite_rating(current)
-    lines.append(f"📊 *Клёв: {score}/10 — {bite_label(score)}*")
-    for n in notes:
-        lines.append(f"  {n}")
+    lines.extend(_format_bite_block(bite))
+    lines.append("")
+    explainer = _format_bite_explainer(bite)
+    lines.extend(f"_{line}_" for line in explainer)
     lines.append("")
 
     # ----- наблюдения из iNaturalist + GBIF -----
@@ -537,12 +729,17 @@ def build_report(
     raw_water_type = (water or {}).get("type")
     # «водоём» — fallback-тип от Overpass, его не учитываем как фильтр habitat.
     water_type = raw_water_type if raw_water_type and raw_water_type != "водоём" else None
-    water_temp_guess = (temp - 2.0) if temp is not None else 15.0
+    water_temp_guess = (
+        bite.water_temp_est
+        if bite.water_temp_est is not None
+        else ((temp - 2.0) if temp is not None else 15.0)
+    )
     fishes = recommend_fish(
         month,
         water_type,
         water_temp_guess,
         observed=local_counts or None,
+        kind_preference=bite.kind_preference,
         max_items=4,
     )
 
@@ -576,9 +773,16 @@ def build_report(
             lines.append(nerest)
             lines.append("")
 
-    # ----- советы новичку -----
-    lines.append("👶 *Советы новичку*")
-    lines.extend(_beginner_tips(fishes, current))
+    # ----- советы новичку (только условно-специфичные) -----
+    tips = _beginner_tips(fishes, current, bite)
+    if tips:
+        lines.append("👶 *Советы на сейчас*")
+        lines.extend(tips)
+        lines.append("")
+
+    lines.append(
+        "_Полный список снастей и базовых советов — в /help_"
+    )
 
     return smart_truncate("\n".join(lines))
 
@@ -593,54 +797,62 @@ def _collect_periods(solunar: dict, prefix: str) -> list[str]:
     return result
 
 
-def _beginner_tips(fishes: list[Fish], current: dict) -> list[str]:
+def _beginner_tips(
+    fishes: list[Fish], current: dict, bite_obj: "BiteReport | None" = None
+) -> list[str]:
+    """Только *условно-специфичные* советы для текущих условий.
+
+    Статичные (приходить на зорю, не мусорить, проверить закон) вынесены
+    в команду /help, чтобы не раздувать каждый отчёт до лимита Telegram.
+    """
     tips: list[str] = []
-    has_predator = any(f.kind == "хищная" for f in fishes)
-    has_peaceful = any(f.kind == "мирная" for f in fishes)
 
-    if has_peaceful:
+    # Ситуативные snip'ы по solunar
+    if bite_obj and bite_obj.solunar_now:
         tips.append(
-            "• Для мирной рыбы (карась, плотва, лещ) — поплавочная удочка "
-            "4–5 м, леска 0.16–0.20, крючок №10–14."
+            "• *Сейчас пик клёва* по solunar — не бросай снасти, лови прямо сейчас."
         )
-    if has_predator:
+    elif bite_obj and bite_obj.solunar_next:
+        kind, mins = bite_obj.solunar_next
         tips.append(
-            "• Для хищника — лёгкий спиннинг 2.1–2.4 м, плетёнка 0.10–0.12, "
-            "на щуку обязательно металлический поводок."
+            f"• До {kind}-пика {mins} мин — раскладывайся заранее, "
+            "чтобы к пику быть готовым."
         )
-    tips.append(
-        "• Приходи на водоём за 30–40 минут до восхода или за 1 час до заката — "
-        "это лучшие окна для клёва."
-    )
-    tips.append("• Прикармливай точку малыми порциями. Не шуми на берегу.")
 
+    # Ветер
     wind = _safe_float(current.get("wind_speed_10m"))
     if wind is not None and wind > 6:
         tips.append(
-            "• Ветер сильный — ищи закрытые заливы и подветренный берег."
+            "• Ветер сильный — ищи *подветренный берег* (ветер тебе в спину), "
+            "заливы, участки за кустами. Там вода спокойнее и заброс легче."
+        )
+    elif wind is not None and wind < 1:
+        tips.append(
+            "• *Штиль* — рыба видит тебя как на ладони. Одевайся тёмно, "
+            "не подходи к краю берега, кидай *далеко*."
         )
 
+    # Температура
     temp = _safe_float(current.get("temperature_2m"))
     if temp is not None:
         if temp < 5:
             tips.append(
-                "• Холодно — рыба пассивна, лови медленно у дна. Оденься "
-                "теплее, возьми термос."
+                "• *Холодно*. Лови медленно у самого дна, маленькими "
+                "приманками. Возьми термос — мёрзнущий рыбак быстро сдаётся."
             )
         elif temp > 28:
             tips.append(
-                "• Жарко — рыба уходит на глубину и в тень. Лучший клёв "
-                "рано утром и после заката."
+                "• *Жарко*. Рыба ушла на глубину и в тень. Ищи тенистые "
+                "места, мосты, коряги. Лови до 10 утра и после 19 часов."
             )
 
-    precip = _safe_float(current.get("precipitation")) or 0.0
-    if precip < 0.1 and (temp if temp is not None else 10) >= 5:
-        tips.append("• Сухо — не забудь головной убор и воду. SPF-крем тоже.")
+    # Критические сочетания
+    has_peaceful = any(f.kind == "мирная" for f in fishes)
+    has_predator = any(f.kind == "хищная" for f in fishes)
+    if has_predator:
+        tips.append(
+            "• На *щуку* — обязательно металлический или флюорокарбоновый "
+            "поводок 15 см. Без него щука перекусит леску."
+        )
 
-    tips.append("• Возьми подсак и зажим для крючка — пригодятся.")
-    tips.append("• Мусор забирай с собой ♻️ — оставим водоёмы чистыми.")
-    tips.append(
-        "• Обязательно проверь актуальные правила рыболовства и нерестовые "
-        "запреты в своём регионе перед выездом."
-    )
     return tips
