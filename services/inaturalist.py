@@ -23,7 +23,6 @@ USER_AGENT = (
     "(+https://github.com/OctoPassik/fishing-helper-bot)"
 )
 
-
 async def fetch_inat_fish(
     lat: float,
     lon: float,
@@ -93,7 +92,6 @@ async def fetch_inat_fish(
             }
         )
     return results
-
 
 def _clean_name(value) -> str | None:
     if not value:
