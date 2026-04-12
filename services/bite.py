@@ -25,7 +25,6 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-
 # -------------------------------------------------------------------- types ---
 
 @dataclass
@@ -39,7 +38,6 @@ class BiteFactor:
     @property
     def abs_weight(self) -> int:
         return max(abs(self.peaceful), abs(self.predator))
-
 
 @dataclass
 class BiteReport:
@@ -58,7 +56,6 @@ class BiteReport:
     @property
     def label(self) -> str:
         return overall_label(self.overall)
-
 
 # ----------------------------------------------------------- time parsing ---
 
@@ -122,7 +119,6 @@ def parse_time_of_day(s: Any) -> int | None:
         return None
     return hh * 60 + mm
 
-
 def get_current_local_minutes(weather: dict) -> int | None:
     """Current local time (minutes from midnight) as reported by Open-Meteo."""
     if not weather:
@@ -130,12 +126,10 @@ def get_current_local_minutes(weather: dict) -> int | None:
     current = weather.get("current") or {}
     return parse_time_of_day(current.get("time"))
 
-
 # ----------------------------------------------------------- pressure ---
 
 def _hpa_to_mmhg(hpa: float) -> float:
     return hpa * 0.75006
-
 
 def _hourly_window(
     weather: dict, field: str, hours_back: int
@@ -168,7 +162,6 @@ def _hourly_window(
     window = values[start : idx + 1]
     return [float(v) for v in window if v is not None]
 
-
 def _pressure_trend_mmhg(weather: dict) -> tuple[float | None, float | None]:
     """(delta over 6h in mmHg, stddev in mmHg), or (None, None) if no data."""
     window_hpa = _hourly_window(weather, "surface_pressure", hours_back=6)
@@ -180,13 +173,11 @@ def _pressure_trend_mmhg(weather: dict) -> tuple[float | None, float | None]:
     var = sum((p - mean) ** 2 for p in window) / len(window)
     return delta, math.sqrt(var)
 
-
 def _temperature_trend(weather: dict, hours: int = 12) -> float:
     window = _hourly_window(weather, "temperature_2m", hours_back=hours)
     if len(window) < 2:
         return 0.0
     return window[-1] - window[0]
-
 
 def _water_temp_estimate(weather: dict) -> float | None:
     """Грубая оценка температуры воды: среднее значение воздуха за ~48 часов.
@@ -204,7 +195,6 @@ def _water_temp_estimate(weather: dict) -> float | None:
         return None
     avg = sum(valid) / len(valid)
     return avg
-
 
 # ----------------------------------------------------------- solunar ---
 
@@ -228,7 +218,6 @@ def _solunar_current_window(
                 return prefix
     return None
 
-
 def _solunar_next_window(
     solunar: dict | None, now_minutes: int, horizon_min: int = 120
 ) -> tuple[str, int] | None:
@@ -251,7 +240,6 @@ def _solunar_next_window(
                     best = (prefix, delta)
     return best
 
-
 # ----------------------------------------------------------- sun ---
 
 def _minutes_from_iso_time(iso_str: str | None) -> int | None:
@@ -263,7 +251,6 @@ def _minutes_from_iso_time(iso_str: str | None) -> int | None:
         return parse_time_of_day(iso_str)
     except Exception:
         return None
-
 
 def _sun_proximity(
     weather: dict, now_minutes: int, window_min: int = 75
@@ -281,7 +268,6 @@ def _sun_proximity(
     if sunset_min is not None and abs(now_minutes - sunset_min) <= window_min:
         return "dusk"
     return None
-
 
 # ----------------------------------------------------------- wind dir ---
 
@@ -310,7 +296,6 @@ def _wind_direction_bonus(
     # Восточный
     return 0, 0, ""
 
-
 # ----------------------------------------------------------- moon ---
 
 def _moon_modifier(solunar: dict | None) -> tuple[int, int, str] | None:
@@ -335,7 +320,6 @@ def _moon_modifier(solunar: dict | None) -> tuple[int, int, str] | None:
         return -1, 0, "новолуние — клёв нестабилен"
     return None
 
-
 # ----------------------------------------------------------- label ---
 
 def overall_label(score: int) -> str:
@@ -348,7 +332,6 @@ def overall_label(score: int) -> str:
     if score >= 3:
         return "🟠 слабый"
     return "🔴 плохой"
-
 
 # ----------------------------------------------------------- main ---
 
