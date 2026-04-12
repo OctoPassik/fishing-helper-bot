@@ -31,7 +31,6 @@ MONTH_RU_LOC = {
 # Максимальная длина сообщения Telegram — 4096 символов. Держим запас.
 TELEGRAM_MAX_LEN = 4000
 
-
 def md_escape(text: str) -> str:
     """Escape user-generated text for Telegram legacy Markdown.
 
@@ -52,7 +51,6 @@ def md_escape(text: str) -> str:
     for ch, repl in replacements.items():
         text = text.replace(ch, repl)
     return text
-
 
 def smart_truncate(report: str, max_len: int = TELEGRAM_MAX_LEN) -> str:
     """Truncate a Markdown report without cutting inside an unclosed tag.
@@ -75,7 +73,6 @@ def smart_truncate(report: str, max_len: int = TELEGRAM_MAX_LEN) -> str:
         cut += "*"
     return cut + "\n\n…"
 
-
 # --------------------------------------------------------------------- bite --
 
 def _safe_float(v) -> float | None:
@@ -90,7 +87,6 @@ def _safe_float(v) -> float | None:
         return None
     return f
 
-
 def bite_rating(current: dict) -> tuple[int, list[str]]:
     """Legacy-обёртка. Новый код использует compute_bite() напрямую."""
     fake_weather = {"current": current or {}, "hourly": {}, "daily": {}}
@@ -103,15 +99,12 @@ def bite_rating(current: dict) -> tuple[int, list[str]]:
     )
     return report.overall, [_factor_line(f) for f in report.factors]
 
-
 def bite_label(score: int) -> str:
     return overall_label(score)
-
 
 def _factor_line(factor) -> str:
     icon = {"good": "✅", "bad": "⚠️", "mixed": "🟠"}.get(factor.kind, "🟡")
     return f"{icon} {factor.text}"
-
 
 # ------------------------------------------------------ beginner explainers --
 
@@ -127,9 +120,7 @@ _GEAR_GLOSSARY = (
     "щуку, судака, окуня.",
 )
 
-
 _MAX_WEATHER_NOTES = 4  # лимит, чтобы отчёт вмещался в 4000 символов
-
 
 def _format_weather_explainer(
     current: dict, bite_obj: "BiteReport"
@@ -251,7 +242,6 @@ def _format_weather_explainer(
 
     return notes[:_MAX_WEATHER_NOTES]
 
-
 def _format_bite_explainer(bite_obj: "BiteReport") -> list[str]:
     """Объяснение «как читать оценку клёва»."""
     score = bite_obj.overall
@@ -282,14 +272,12 @@ def _format_bite_explainer(bite_obj: "BiteReport") -> list[str]:
         )
     return [text]
 
-
 def _format_solunar_explainer() -> str:
     return (
         "_Major-пики — это окна когда луна в зените или надире; рыба "
         "в это время жадно кушает. Minor-пики — восход/заход луны, "
         "клёв чуть слабее. Работают по всему миру круглый год._"
     )
-
 
 def _format_bite_block(bite: "BiteReport") -> list[str]:
     """Render the bite rating block with peaceful/predator split + factors."""
@@ -328,7 +316,6 @@ def _format_bite_block(bite: "BiteReport") -> list[str]:
             lines.append(f"  {_factor_line(f)}")
     return lines
 
-
 # ----------------------------------------------------------------- helpers ---
 
 def _extract_hhmm(s: str | None) -> str:
@@ -341,7 +328,6 @@ def _extract_hhmm(s: str | None) -> str:
         return s
     except Exception:
         return s
-
 
 def _format_day_rating(rating) -> str | None:
     """Solunar.org возвращает dayRating 0..2 (poor/fair/good).
@@ -363,10 +349,8 @@ def _format_day_rating(rating) -> str | None:
         return "🟢 очень хороший"
     return "🟢 отличный"
 
-
 def _is_krasnodar_krai(lat: float, lon: float) -> bool:
     return 43.4 <= lat <= 46.8 and 36.6 <= lon <= 41.9
-
 
 def _krasnodar_nerest_warning(today: _dt.date) -> str | None:
     """Вернуть предупреждение о нерестовом запрете, если сейчас действует."""
@@ -412,7 +396,6 @@ def _krasnodar_nerest_warning(today: _dt.date) -> str | None:
     )
     return "\n".join([header, *active, "", footer])
 
-
 # -------------------------------------------------------- water formatting --
 
 def _water_type_prepositional(water_type: str) -> str:
@@ -428,7 +411,6 @@ def _water_type_prepositional(water_type: str) -> str:
         "старица": "старице",
         "водоём": "водоёме",
     }.get(water_type.lower(), water_type)
-
 
 def _format_water_header(water: dict | None) -> list[str]:
     """Собирает заголовок про водоём — разный для on_site и nearest."""
@@ -477,14 +459,12 @@ def _format_water_header(water: dict | None) -> list[str]:
         "_Ближайший именованный водоём в радиусе 5 км не найден._",
     ]
 
-
 # Полезные OSM-теги водоёмов, которые стоит показать рыбаку.
 _OSM_EXTRA_LABELS = (
     ("depth", "Глубина"),
     ("maxdepth", "Макс. глубина"),
     ("ele", "Высота над уровнем моря"),
 )
-
 
 def _format_water_extras(water: dict | None) -> list[str]:
     """Дополнительные полезные факты о водоёме из OSM-тегов."""
@@ -524,7 +504,6 @@ def _format_water_extras(water: dict | None) -> list[str]:
         return ["🌊 *Про водоём*", *extras]
     return []
 
-
 # ----------------------------------------------------------------- report ----
 
 def _process_observations(
@@ -561,7 +540,6 @@ def _process_observations(
                 unknown.append((str(label), count))
     return local_counts, unknown
 
-
 def _format_observations_section(
     local_counts: dict[str, int],
     unknown: list[tuple[str, int]],
@@ -590,7 +568,6 @@ def _format_observations_section(
         extra = "" if len(unknown) <= 6 else f" и ещё {len(unknown) - 6}"
         lines.append(f"_Не в базе{extra}: {labels}_")
     return lines
-
 
 def build_report(
     *,
@@ -808,7 +785,6 @@ def build_report(
 
     return smart_truncate("\n".join(lines))
 
-
 def _collect_periods(solunar: dict, prefix: str) -> list[str]:
     result: list[str] = []
     for n in (1, 2):
@@ -817,7 +793,6 @@ def _collect_periods(solunar: dict, prefix: str) -> list[str]:
         if start and stop and isinstance(start, str) and isinstance(stop, str):
             result.append(f"{start}–{stop}")
     return result
-
 
 def _beginner_tips(
     fishes: list[Fish], current: dict, bite_obj: "BiteReport | None" = None
