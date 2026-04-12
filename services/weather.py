@@ -38,7 +38,6 @@ WEATHER_CODE_RU: dict[int, str] = {
     99: "сильная гроза с градом ⛈",
 }
 
-
 async def fetch_weather(lat: float, lon: float) -> dict:
     """Fetch current + hourly + daily weather from Open-Meteo.
 
@@ -114,7 +113,6 @@ async def fetch_weather(lat: float, lon: float) -> dict:
             current["weather_desc_ru"] = "погода не определена"
     data["current"] = current
     return data
-
 
 def wind_direction_ru(degrees: float | None) -> str:
     """Convert meteo wind direction (degrees) to Russian 8-rhumb label."""
