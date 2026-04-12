@@ -25,11 +25,9 @@ log = logging.getLogger(__name__)
 _CACHE: "OrderedDict[tuple, list[dict]]" = OrderedDict()
 _CACHE_LIMIT = 256
 
-
 def _cache_key(lat: float, lon: float, radius_km: float) -> tuple:
     # Округляем до ~1.1 км (0.01°) — хватает для кэширования соседних точек.
     return (round(lat, 2), round(lon, 2), int(radius_km))
-
 
 def _cache_get(key: tuple) -> list[dict] | None:
     if key in _CACHE:
@@ -37,18 +35,15 @@ def _cache_get(key: tuple) -> list[dict] | None:
         return _CACHE[key]
     return None
 
-
 def _cache_set(key: tuple, value: list[dict]) -> None:
     _CACHE[key] = value
     _CACHE.move_to_end(key)
     while len(_CACHE) > _CACHE_LIMIT:
         _CACHE.popitem(last=False)
 
-
 def clear_cache() -> None:
     """Сбросить кэш (для тестов)."""
     _CACHE.clear()
-
 
 async def _safe(coro, name: str) -> list[dict]:
     try:
@@ -56,7 +51,6 @@ async def _safe(coro, name: str) -> list[dict]:
     except Exception as exc:
         log.warning("observations source %s failed: %s", name, exc)
         return []
-
 
 async def fetch_observations(
     lat: float,
@@ -127,7 +121,6 @@ async def fetch_observations(
     result = sorted(merged.values(), key=lambda e: (-e["count"], e["scientific"]))
     _cache_set(key, result)
     return result
-
 
 def _normalize_latin_key(name: str) -> str:
     """Use only 'Genus species' (lowercased) for dedup, ignoring author."""
