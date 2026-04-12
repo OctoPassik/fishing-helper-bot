@@ -10,7 +10,6 @@ import aiohttp
 SOLUNAR_URL_FMT = "https://api.solunar.org/solunar/{lat},{lon},{date},{tz}"
 USER_AGENT = "fishing-helper-bot/1.0 (+https://github.com/OctoPassik/fishing-helper-bot)"
 
-
 async def fetch_solunar(
     lat: float,
     lon: float,
@@ -39,7 +38,6 @@ async def fetch_solunar(
         raise ValueError(f"Solunar API вернул не-dict: {type(data).__name__}")
     return data
 
-
 _MOON_PHASE_RU = {
     "New": "новолуние 🌑",
     "New Moon": "новолуние 🌑",
@@ -53,7 +51,6 @@ _MOON_PHASE_RU = {
     "Third Quarter": "последняя четверть 🌗",
     "Waning Crescent": "убывающий серп 🌘",
 }
-
 
 def moon_phase_ru(phase: str | None) -> str:
     if not phase:
