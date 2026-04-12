@@ -17,13 +17,20 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 from dotenv import load_dotenv
 
 from services.fish_observations import fetch_observations
 from services.report import build_report, smart_truncate
 from services.solunar import fetch_solunar
-from services.waters import find_nearest_water
+from services.waters import find_nearest_water, find_wide_waters
 from services.weather import fetch_weather
 
 load_dotenv()
@@ -143,6 +150,28 @@ async def _safe_send_plain(msg: Message, text: str) -> None:
         await msg.answer(part, parse_mode=None, disable_web_page_preview=True)
 
 
+def _make_water_keyboard(waters: list[dict]) -> InlineKeyboardMarkup:
+    """Build inline keyboard from wide water search results."""
+    buttons = []
+    for i, w in enumerate(waters):
+        wtype = (w.get("type") or "водоём").capitalize()
+        name = w.get("name") or "?"
+        dist = w.get("distance_km", "?")
+        label = f"{wtype} {name} ({dist} км)"
+        if len(label) > 50:
+            label = label[:47] + "…"
+        # callback_data max 64 bytes: "w:{index}:{lat},{lon}"
+        clat = w.get("lat") or 0
+        clon = w.get("lon") or 0
+        cb = f"w:{i}:{clat:.4f},{clon:.4f}"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=cb)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# In-memory store for wide search results per user (chat_id -> list)
+_wide_cache: dict[int, tuple[float, float, list[dict]]] = {}
+
+
 def create_dispatcher() -> Dispatcher:
     dp = Dispatcher()
 
@@ -222,6 +251,27 @@ def create_dispatcher() -> Dispatcher:
         except Exception as exc:
             log.warning("overpass fetch failed: %s", exc)
 
+        # --- Если водоём не найден в 5 км — ищем в 100 км и даём выбор ---
+        if water is None:
+            try:
+                await progress.edit_text("🔎 Водоём рядом не найден, ищу в радиусе 100 км…")
+                wide_waters = await find_wide_waters(lat, lon, max_results=8)
+            except Exception as exc:
+                log.warning("wide waters search failed: %s", exc)
+                wide_waters = []
+
+            if wide_waters:
+                await _cancel_quietly(obs_task)
+                chat_id = msg.chat.id
+                _wide_cache[chat_id] = (lat, lon, wide_waters)
+                kb = _make_water_keyboard(wide_waters)
+                await progress.edit_text(
+                    "📍 В радиусе 5 км водоёмов не нашлось.\n"
+                    "Выбери водоём из списка — я покажу отчёт для него:",
+                    reply_markup=kb,
+                )
+                return
+
         # --- наблюдения рыб (не критично) ---
         observations: list[dict] = []
         try:
@@ -232,27 +282,99 @@ def create_dispatcher() -> Dispatcher:
             log.warning("fish observations fetch failed: %s", exc)
 
         # --- сборка отчёта ---
+        await _send_report(msg, progress, lat, lon, weather, solunar, water, observations)
+
+    @dp.callback_query(lambda cb: cb.data and cb.data.startswith("w:"))
+    async def on_water_chosen(cb: CallbackQuery) -> None:
+        """Handle inline keyboard water body selection."""
+        await cb.answer()
+        chat_id = cb.message.chat.id if cb.message else 0
+        cached = _wide_cache.pop(chat_id, None)
+        if not cached:
+            if cb.message:
+                await cb.message.edit_text("⏳ Сессия истекла. Отправь геопозицию заново.")
+            return
+
+        user_lat, user_lon, waters = cached
+
+        # Parse callback data: "w:{index}:{lat},{lon}"
+        parts = (cb.data or "").split(":")
+        try:
+            idx = int(parts[1])
+            chosen = waters[idx]
+        except (IndexError, ValueError):
+            if cb.message:
+                await cb.message.edit_text("❌ Ошибка выбора. Отправь геопозицию заново.")
+            return
+
+        if cb.message:
+            await cb.message.edit_text(
+                f"🔎 Строю отчёт для {chosen.get('type', 'водоём')} "
+                f"{chosen.get('name', '?')}…",
+                reply_markup=None,
+            )
+
+        # Build a water dict compatible with report
+        water_for_report: dict = {
+            "name": chosen.get("name"),
+            "type": chosen.get("type", "водоём"),
+            "distance_km": chosen.get("distance_km", 0),
+            "on_site": False,
+            "inside": False,
+            "tags": chosen.get("tags", {}),
+        }
+
+        # Fetch weather + solunar for user's location
+        try:
+            weather = await fetch_weather(user_lat, user_lon)
+        except Exception:
+            if cb.message:
+                await cb.message.edit_text("❌ Не удалось получить погоду. Попробуй снова.")
+            return
+
+        tz_hours = _tz_hours_from_weather(weather)
+        solunar: dict | None = None
+        try:
+            solunar = await fetch_solunar(user_lat, user_lon, date.today(), tz_hours)
+        except Exception:
+            pass
+
+        observations: list[dict] = []
+        try:
+            observations = await fetch_observations(user_lat, user_lon, radius_km=25)
+        except Exception:
+            pass
+
+        await _send_report(
+            cb.message, cb.message, user_lat, user_lon,
+            weather, solunar, water_for_report, observations,
+        )
+
+    async def _send_report(
+        msg: Message, progress: Message,
+        lat: float, lon: float,
+        weather: dict, solunar: dict | None,
+        water: dict | None, observations: list[dict],
+    ) -> None:
+        """Build report and send it, with markdown fallback."""
         try:
             report = build_report(
-                lat=lat,
-                lon=lon,
-                weather=weather,
-                solunar=solunar,
-                water=water,
-                today=date.today(),
-                observations=observations,
+                lat=lat, lon=lon, weather=weather,
+                solunar=solunar, water=water,
+                today=date.today(), observations=observations,
             )
         except Exception as exc:
             log.exception("report building failed")
-            await progress.edit_text(
-                f"❌ Ошибка составления отчёта: {type(exc).__name__}"
-            )
+            try:
+                await progress.edit_text(
+                    f"❌ Ошибка составления отчёта: {type(exc).__name__}"
+                )
+            except Exception:
+                pass
             return
 
-        # smart_truncate уже применён внутри build_report, но подстрахуемся.
         report = smart_truncate(report)
 
-        # --- отправка: пытаемся markdown, при ошибке делаем чистый текст ---
         try:
             await progress.edit_text(
                 report,
@@ -261,18 +383,14 @@ def create_dispatcher() -> Dispatcher:
             )
             return
         except TelegramBadRequest as exc:
-            # Чаще всего — can't parse entities. Удалим прогресс и пошлём
-            # обычный текст новым сообщением.
             log.warning("markdown edit failed: %s", exc)
         except Exception as exc:
             log.warning("progress edit failed: %s", exc)
 
-        # Пытаемся удалить прогресс, чтобы не оставлять «смотрю…».
         try:
             await progress.delete()
         except Exception:
             pass
-
         await _safe_send_plain(msg, report)
 
     @dp.message()

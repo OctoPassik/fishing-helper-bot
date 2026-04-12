@@ -415,6 +415,21 @@ def _krasnodar_nerest_warning(today: _dt.date) -> str | None:
 
 # -------------------------------------------------------- water formatting --
 
+def _water_type_prepositional(water_type: str) -> str:
+    """Склонение типа водоёма в предложном падеже: река → реке."""
+    return {
+        "река": "реке",
+        "озеро": "озере",
+        "пруд": "пруду",
+        "водохранилище": "водохранилище",
+        "лиман": "лимане",
+        "канал": "канале",
+        "ручей": "ручье",
+        "старица": "старице",
+        "водоём": "водоёме",
+    }.get(water_type.lower(), water_type)
+
+
 def _format_water_header(water: dict | None) -> list[str]:
     """Собирает заголовок про водоём — разный для on_site и nearest."""
     if not water:
@@ -754,7 +769,14 @@ def build_report(
             bait_str = ", ".join(f.baits[:4])
             peak_mark = "🔥 пик сезона" if month in f.peak_months else "активна"
             confirmed = " 🔬" if f.name in local_counts else ""
-            lines.append(f"*{i}. {f.name}*{confirmed} — {peak_mark} ({f.kind})")
+            # Пометка: рыба подходит именно для этого водоёма или только по сезону
+            if water_type and water_type in f.habitats:
+                habitat_mark = f" (в вашем {_water_type_prepositional(water_type)})"
+            elif water_type:
+                habitat_mark = " (по сезону)"
+            else:
+                habitat_mark = ""
+            lines.append(f"*{i}. {f.name}*{confirmed} — {peak_mark} ({f.kind}){habitat_mark}")
             lines.append(f"   🎣 Снасть: {gear_str}")
             lines.append(f"   🪱 Наживка: {bait_str}")
             lines.append(f"   ⏰ Время: {f.best_time}")
