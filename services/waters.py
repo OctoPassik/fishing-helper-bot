@@ -64,7 +64,6 @@ _QUERY_WIDE = """
 out center tags 30;
 """.strip()
 
-
 # --------------------------------------------------------------- geometry ---
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -77,7 +76,6 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         + math.cos(la1) * math.cos(la2) * math.sin(dlo / 2) ** 2
     )
     return 2 * R * math.asin(math.sqrt(a))
-
 
 def _point_to_segment_km(
     plat: float, plon: float,
@@ -104,7 +102,6 @@ def _point_to_segment_km(
     dy = py - t * by
     return math.hypot(dx, dy)
 
-
 def _min_dist_km_to_ring(plat: float, plon: float, ring: list[dict]) -> float:
     min_d = float("inf")
     n = len(ring)
@@ -123,7 +120,6 @@ def _min_dist_km_to_ring(plat: float, plon: float, ring: list[dict]) -> float:
         if d < min_d:
             min_d = d
     return min_d
-
 
 def _point_in_ring(lat: float, lon: float, ring: list[dict]) -> bool:
     n = len(ring)
@@ -144,7 +140,6 @@ def _point_in_ring(lat: float, lon: float, ring: list[dict]) -> bool:
         j = i
     return inside
 
-
 def _is_closed(geometry: list[dict]) -> bool:
     if not geometry or len(geometry) < 3:
         return False
@@ -154,7 +149,6 @@ def _is_closed(geometry: list[dict]) -> bool:
     if flat is None or llat is None:
         return False
     return abs(flat - llat) < 1e-9 and abs(flon - llon) < 1e-9
-
 
 def _min_dist_km_to_geometry(lat: float, lon: float, element: dict) -> tuple[float, bool]:
     min_dist = float("inf")
@@ -190,7 +184,6 @@ def _min_dist_km_to_geometry(lat: float, lon: float, element: dict) -> tuple[flo
         return float("inf"), False
     return min_dist, inside
 
-
 def _dist_to_center(lat: float, lon: float, element: dict) -> float:
     """Distance to element center point (for `out center tags` results)."""
     c = element.get("center")
@@ -199,7 +192,6 @@ def _dist_to_center(lat: float, lon: float, element: dict) -> float:
     if element.get("lat") is not None:
         return _haversine_km(lat, lon, element["lat"], element["lon"])
     return float("inf")
-
 
 # --------------------------------------------------------------- tagging ---
 
@@ -228,7 +220,6 @@ def _human_type(tags: dict) -> str:
         }.get(water_kind or "", "водоём")
     return "водоём"
 
-
 def _type_rank(tags: dict) -> int:
     if tags.get("natural") == "water":
         water_kind = tags.get("water") or ""
@@ -252,14 +243,12 @@ def _type_rank(tags: dict) -> int:
         return 2
     return 3
 
-
 def _fishable(tags: dict) -> bool:
     if tags.get("water") in ("wastewater", "basin"):
         return False
     if tags.get("intermittent") == "yes" and not tags.get("name"):
         return False
     return True
-
 
 def _build_result(element: dict, tags: dict, dist_km: float,
                   on_site: bool, inside: bool) -> dict:
@@ -272,7 +261,6 @@ def _build_result(element: dict, tags: dict, dist_km: float,
         "element_type": element.get("type"),
         "tags": tags,
     }
-
 
 # --------------------------------------------------------------- helpers ---
 
@@ -293,7 +281,6 @@ async def _overpass_query(query: str, timeout_sec: int = 20) -> dict | None:
                 log.info("overpass %s failed: %s", url, exc)
                 continue
     return None
-
 
 # --------------------------------------------------------------- main ---
 
@@ -354,7 +341,6 @@ async def find_nearest_water(lat: float, lon: float) -> dict | None:
             return _build_result(el, tags, dist_km, on_site=False, inside=False)
 
     return None
-
 
 async def find_wide_waters(lat: float, lon: float, max_results: int = 8) -> list[dict]:
     """Search for major named water bodies within ~100 km using Nominatim.
