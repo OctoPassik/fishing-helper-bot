@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Sequence
 
-
 @dataclass(frozen=True)
 class Fish:
     name: str
@@ -24,7 +23,6 @@ class Fish:
     best_time: str
     tip: str
     latin_names: tuple[str, ...] = ()
-
 
 FISH_DB: tuple[Fish, ...] = (
     Fish(
@@ -396,7 +394,6 @@ FISH_DB: tuple[Fish, ...] = (
     ),
 )
 
-
 # ---------------- Резолвер «латинское имя → локальная рыба» ---------------
 
 # Строится из FISH_DB сразу после объявления. Ключ — latin в lowercase,
@@ -408,7 +405,6 @@ for _fish in FISH_DB:
         key = _lat.strip().lower()
         if key:
             _LATIN_TO_FISH.setdefault(key, _fish)
-
 
 def resolve_latin(scientific: str | None) -> Fish | None:
     """Map any scientific name (with optional author) to our local Fish.
@@ -432,9 +428,7 @@ def resolve_latin(scientific: str | None) -> Fish | None:
             return fish
     return None
 
-
 # ----------------------------- Рекомендации ------------------------------
-
 
 def recommend_fish(
     month: int,
@@ -472,7 +466,6 @@ def recommend_fish(
         scored.append((score, fish))
     scored.sort(key=lambda x: -x[0])
     return [f for _, f in scored[:max_items]]
-
 
 def all_species_for_month(month: int) -> Sequence[Fish]:
     return tuple(f for f in FISH_DB if month in f.active_months)
