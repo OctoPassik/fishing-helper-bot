@@ -26,7 +26,6 @@ USER_AGENT = (
     "(+https://github.com/OctoPassik/fishing-helper-bot)"
 )
 
-
 def _bbox_from_point(
     lat: float, lon: float, radius_km: float
 ) -> tuple[float, float, float, float]:
@@ -41,7 +40,6 @@ def _bbox_from_point(
         lon + lon_delta,
     )
 
-
 def _normalize_scientific(name: str) -> str:
     """Drop author/year suffix, keep only 'Genus species'."""
     if not name:
@@ -50,7 +48,6 @@ def _normalize_scientific(name: str) -> str:
     if len(parts) >= 2:
         return f"{parts[0]} {parts[1]}"
     return parts[0] if parts else ""
-
 
 async def fetch_gbif_fish(
     lat: float,
