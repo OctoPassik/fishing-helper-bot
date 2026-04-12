@@ -43,7 +43,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("fishing-bot")
 
-
 HELLO = (
     "🎣 *Рыболовный помощник для новичков*\n\n"
     "Пришли мне *геопозицию* того места, где хочешь порыбачить "
@@ -118,7 +117,6 @@ FALLBACK = (
     "и я расскажу, что сейчас клюёт на ближайшем водоёме 🎣"
 )
 
-
 def _tz_hours_from_weather(weather: dict) -> int:
     """Return signed integer UTC offset in hours from Open-Meteo response."""
     offset = weather.get("utc_offset_seconds") if weather else None
@@ -130,7 +128,6 @@ def _tz_hours_from_weather(weather: dict) -> int:
         return 0
     # round-toward-zero to handle fractional half-hour zones (e.g. +5:30 → 5)
     return int(seconds / 3600)
-
 
 async def _safe_send_plain(msg: Message, text: str) -> None:
     """Send a plain-text message, splitting if necessary to respect Telegram
@@ -149,7 +146,6 @@ async def _safe_send_plain(msg: Message, text: str) -> None:
     for part in parts:
         await msg.answer(part, parse_mode=None, disable_web_page_preview=True)
 
-
 def _make_water_keyboard(waters: list[dict]) -> InlineKeyboardMarkup:
     """Build inline keyboard from wide water search results."""
     buttons = []
@@ -167,10 +163,8 @@ def _make_water_keyboard(waters: list[dict]) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(text=label, callback_data=cb)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-
 # In-memory store for wide search results per user (chat_id -> list)
 _wide_cache: dict[int, tuple[float, float, list[dict]]] = {}
-
 
 def create_dispatcher() -> Dispatcher:
     dp = Dispatcher()
@@ -399,7 +393,6 @@ def create_dispatcher() -> Dispatcher:
 
     return dp
 
-
 async def main() -> None:
     if not BOT_TOKEN:
         raise SystemExit(
@@ -418,7 +411,6 @@ async def main() -> None:
         await dp.start_polling(bot, allowed_updates=None)
     finally:
         await bot.session.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
