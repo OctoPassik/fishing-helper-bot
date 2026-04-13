@@ -562,12 +562,8 @@ def _format_observations_section(
     for name, count in sorted(local_counts.items(), key=lambda x: (-x[1], x[0])):
         lines.append(f"• {md_escape(name)} — {count} набл.")
 
-    # Unknown species: show top-5 so section doesn't blow up the message
-    if unknown:
-        top = sorted(unknown, key=lambda x: -x[1])[:6]
-        labels = ", ".join(md_escape(n) for n, _ in top)
-        extra = "" if len(unknown) <= 6 else f" и ещё {len(unknown) - 6}"
-        lines.append(f"_Не в базе{extra}: {labels}_")
+    # Unknown species — skip entirely (mostly aquarium escapees,
+    # endangered species, and tiny non-game fish that confuse users)
     return lines
 
 def build_report(
@@ -791,22 +787,30 @@ def build_report(
     if use_water_specific:
         water_label = md_escape(water_name or "водоём")
         header = f"🐟 *Рыба в {water_label} в {MONTH_RU_LOC[month]}*"
-        if local_counts:
-            header += " (🔬 — наблюдения)"
+        lines.append(header)
+        lines.append("_📋 = из базы водоёма, 🔬 = подтверждено iNaturalist_")
     elif use_observations:
-        header = f"🐟 *Замечена здесь в {MONTH_RU_LOC[month]}* (🔬 iNaturalist/GBIF)"
-    elif local_counts:
-        header = f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}* (🔬 — подтверждено наблюдениями)"
+        header = f"🐟 *Рыба рядом в {MONTH_RU_LOC[month]}*"
+        lines.append(header)
+        lines.append("_🔬 по данным iNaturalist/GBIF_")
     else:
-        header = f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}*"
-    lines.append(header)
+        header = f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}* (по сезону)"
+        lines.append(header)
     if fishes:
         for i, f in enumerate(fishes, 1):
             gear_str = ", ".join(f.gear)
             bait_str = ", ".join(f.baits[:4])
             peak_mark = "🔥 пик" if month in f.peak_months else "активна"
-            confirmed = " 🔬" if f.name in local_counts else ""
-            lines.append(f"*{i}. {f.name}*{confirmed} — {peak_mark} ({f.kind})")
+            # Пометка источника: 📋 = из базы водоёма, 🔬 = из iNaturalist
+            if use_water_specific and f.name in local_counts:
+                source = " 📋🔬"  # и в базе, и подтверждена iNat
+            elif use_water_specific:
+                source = " 📋"     # только в базе водоёма
+            elif use_observations:
+                source = " 🔬"     # только из iNaturalist
+            else:
+                source = ""
+            lines.append(f"*{i}. {f.name}*{source} — {peak_mark} ({f.kind})")
             lines.append(f"   🎣 Снасть: {gear_str}")
             lines.append(f"   🪱 Наживка: {bait_str}")
             lines.append(f"   ⏰ Время: {f.best_time}")
