@@ -9,7 +9,8 @@ from .bite import (
     get_current_local_minutes,
     overall_label,
 )
-from .fish_db import Fish, recommend_fish, resolve_latin
+from .fish_db import Fish, FISH_DB, recommend_fish, resolve_latin
+from .water_fish_map import lookup_water_fish
 from .solunar import moon_phase_ru
 from .weather import wind_direction_ru
 
@@ -716,26 +717,62 @@ def build_report(
         lines.extend(obs_lines)
         lines.append("")
 
-    # ----- рыба по сезону -----
+    # ----- рыба по водоёму / сезону -----
     month = today.month
     raw_water_type = (water or {}).get("type")
-    # «водоём» — fallback-тип от Overpass, его не учитываем как фильтр habitat.
     water_type = raw_water_type if raw_water_type and raw_water_type != "водоём" else None
+    water_name = (water or {}).get("name")
     water_temp_guess = (
         bite.water_temp_est
         if bite.water_temp_est is not None
         else ((temp - 2.0) if temp is not None else 15.0)
     )
-    fishes = recommend_fish(
-        month,
-        water_type,
-        water_temp_guess,
-        observed=local_counts or None,
-        kind_preference=bite.kind_preference,
-        max_items=4,
-    )
 
-    if local_counts:
+    # Попытаемся найти рыбу конкретно для этого водоёма
+    water_fish_names = lookup_water_fish(water_name)
+    use_water_specific = False
+
+    if water_fish_names:
+        # Собираем Fish-объекты из базы по именам, фильтруем по сезону
+        fish_by_name = {f.name: f for f in FISH_DB}
+        water_fishes_all = [fish_by_name[n] for n in water_fish_names if n in fish_by_name]
+        # Фильтр по активному месяцу
+        water_fishes_active = [f for f in water_fishes_all if month in f.active_months]
+        if water_fishes_active:
+            # Скоринг: пик сезона + температура + наблюдения + kind_preference
+            scored: list[tuple[float, Fish]] = []
+            for f in water_fishes_active:
+                score = 5.0
+                if month in f.peak_months:
+                    score += 10.0
+                tmin, tmax = f.water_temp_c
+                if tmin <= water_temp_guess <= tmax:
+                    score += 3.0
+                if local_counts and f.name in local_counts:
+                    score += 15.0 + min(float(local_counts[f.name]), 20.0)
+                if bite.kind_preference and f.kind == bite.kind_preference:
+                    score += 3.0
+                scored.append((score, f))
+            scored.sort(key=lambda x: -x[0])
+            fishes = [f for _, f in scored[:5]]
+            use_water_specific = True
+
+    if not use_water_specific:
+        fishes = recommend_fish(
+            month,
+            water_type,
+            water_temp_guess,
+            observed=local_counts or None,
+            kind_preference=bite.kind_preference,
+            max_items=4,
+        )
+
+    if use_water_specific:
+        water_label = md_escape(water_name or "водоём")
+        header = f"🐟 *Рыба в {water_label} в {MONTH_RU_LOC[month]}*"
+        if local_counts:
+            header += " (🔬 — наблюдения)"
+    elif local_counts:
         header = f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}* (🔬 — подтверждено наблюдениями)"
     else:
         header = f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}*"
@@ -744,16 +781,9 @@ def build_report(
         for i, f in enumerate(fishes, 1):
             gear_str = ", ".join(f.gear)
             bait_str = ", ".join(f.baits[:4])
-            peak_mark = "🔥 пик сезона" if month in f.peak_months else "активна"
+            peak_mark = "🔥 пик" if month in f.peak_months else "активна"
             confirmed = " 🔬" if f.name in local_counts else ""
-            # Пометка: рыба подходит именно для этого водоёма или только по сезону
-            if water_type and water_type in f.habitats:
-                habitat_mark = f" (в вашем {_water_type_prepositional(water_type)})"
-            elif water_type:
-                habitat_mark = " (по сезону)"
-            else:
-                habitat_mark = ""
-            lines.append(f"*{i}. {f.name}*{confirmed} — {peak_mark} ({f.kind}){habitat_mark}")
+            lines.append(f"*{i}. {f.name}*{confirmed} — {peak_mark} ({f.kind})")
             lines.append(f"   🎣 Снасть: {gear_str}")
             lines.append(f"   🪱 Наживка: {bait_str}")
             lines.append(f"   ⏰ Время: {f.best_time}")
