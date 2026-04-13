@@ -757,7 +757,28 @@ def build_report(
             fishes = [f for _, f in scored[:5]]
             use_water_specific = True
 
-    if not use_water_specific:
+    # Уровень 2: iNaturalist/GBIF наблюдения как основной источник
+    use_observations = False
+    if not use_water_specific and local_counts:
+        # Есть реальные наблюдения рыб рядом — используем их как базу
+        fish_by_name = {f.name: f for f in FISH_DB}
+        obs_fishes = []
+        for fname, count in sorted(local_counts.items(), key=lambda x: -x[1]):
+            fish = fish_by_name.get(fname)
+            if fish and month in fish.active_months:
+                score = 15.0 + min(float(count), 20.0)
+                if month in fish.peak_months:
+                    score += 8.0
+                if bite.kind_preference and fish.kind == bite.kind_preference:
+                    score += 3.0
+                obs_fishes.append((score, fish))
+        if obs_fishes:
+            obs_fishes.sort(key=lambda x: -x[0])
+            fishes = [f for _, f in obs_fishes[:5]]
+            use_observations = True
+
+    # Уровень 3: сезонный fallback
+    if not use_water_specific and not use_observations:
         fishes = recommend_fish(
             month,
             water_type,
@@ -772,6 +793,8 @@ def build_report(
         header = f"🐟 *Рыба в {water_label} в {MONTH_RU_LOC[month]}*"
         if local_counts:
             header += " (🔬 — наблюдения)"
+    elif use_observations:
+        header = f"🐟 *Замечена здесь в {MONTH_RU_LOC[month]}* (🔬 iNaturalist/GBIF)"
     elif local_counts:
         header = f"🐟 *Что клюёт в {MONTH_RU_LOC[month]}* (🔬 — подтверждено наблюдениями)"
     else:
