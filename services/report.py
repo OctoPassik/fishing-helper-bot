@@ -701,15 +701,13 @@ def build_report(
     lines.extend(f"_{line}_" for line in explainer)
     lines.append("")
 
-    # ----- наблюдения из iNaturalist + GBIF -----
+    # ----- подготовка наблюдений (нужны для скоринга рыб) -----
     local_counts, unknown = _process_observations(observations)
     sources: set[str] = set()
     for obs in observations or []:
         for src in obs.get("sources") or ([obs.get("source")] if obs.get("source") else []):
             if src:
                 sources.add(src)
-    # Секция «Замечены здесь» убрана — источник (📋/🔬) теперь
-    # показывается прямо у каждой рыбы в рекомендациях.
 
     # ----- рыба по водоёму / сезону -----
     month = today.month
@@ -818,6 +816,12 @@ def build_report(
         lines.append(
             "_Сейчас не самый активный месяц. Попробуй другой сезон._"
         )
+        lines.append("")
+
+    # ----- наблюдения iNaturalist + GBIF (после рыб) -----
+    obs_lines = _format_observations_section(local_counts, unknown, sources)
+    if obs_lines:
+        lines.extend(obs_lines)
         lines.append("")
 
     # ----- нерестовый запрет Краснодарского края -----
