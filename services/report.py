@@ -708,10 +708,8 @@ def build_report(
         for src in obs.get("sources") or ([obs.get("source")] if obs.get("source") else []):
             if src:
                 sources.add(src)
-    obs_lines = _format_observations_section(local_counts, unknown, sources)
-    if obs_lines:
-        lines.extend(obs_lines)
-        lines.append("")
+    # Секция «Замечены здесь» убрана — источник (📋/🔬) теперь
+    # показывается прямо у каждой рыбы в рекомендациях.
 
     # ----- рыба по водоёму / сезону -----
     month = today.month
