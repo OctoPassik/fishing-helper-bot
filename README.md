@@ -46,7 +46,7 @@ In Telegram: open the bot → **Start** → 📎 → *Location* → send any pla
 
 ## License
 
-[MIT](LICENSE) © 2026 Vladimir (OctoPass)
+[MIT](LICENSE) © 2026 OctoPass
 
 ---
 
@@ -158,4 +158,4 @@ fishing-helper-bot/
 
 ### Лицензия
 
-[MIT](LICENSE) © 2026 Vladimir (OctoPass)
+[MIT](LICENSE) © 2026 OctoPass
